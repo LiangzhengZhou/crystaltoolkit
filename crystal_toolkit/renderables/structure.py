@@ -8,6 +8,9 @@ import numpy as np
 from pymatgen.core import PeriodicSite, Structure
 
 from crystal_toolkit.core.legend import Legend
+from pymatgen.core.operations import SymmOp
+
+from crystal_toolkit.core.orientation import direction_to_rotation
 from crystal_toolkit.core.scene import Scene
 
 
@@ -61,6 +64,7 @@ def get_structure_scene(
     origin: Sequence[float] | None = None,
     legend: Legend | None = None,
     draw_image_atoms: bool = True,
+    view_direction: Sequence[float] | None = None,
 ) -> Scene:
     """Create CTK objects for the lattice and sties
     Args:
@@ -69,20 +73,32 @@ def get_structure_scene(
         legend: Legend for the sites
         draw_image_atoms: If true draw image atoms that are just outside the
         periodic boundary.
+        view_direction: Optional direction vector to align with the +Z axis.
 
     Returns:
         CTK scene object to be rendered
     """
     origin = origin or list(-self.lattice.get_cartesian_coords([0.5, 0.5, 0.5]))
 
-    legend = legend or Legend(self)
+    structure = self
+    if view_direction is not None:
+        rotation = direction_to_rotation(
+            np.array(view_direction, dtype=float),
+            lattice=self.lattice.matrix,
+        )
+        structure = self.copy()
+        structure.apply_operation(
+            SymmOp.from_rotation_and_translation(rotation, [0, 0, 0])
+        )
+
+    legend = legend or Legend(structure)
 
     primitives = defaultdict(list)
 
-    sites_to_draw = self._get_sites_to_draw(draw_image_atoms=draw_image_atoms)
+    sites_to_draw = structure._get_sites_to_draw(draw_image_atoms=draw_image_atoms)
 
     for idx, jimage in sites_to_draw:
-        site = self[idx]
+        site = structure[idx]
         if jimage != (0, 0, 0):
             site = PeriodicSite(
                 site.species,
@@ -94,9 +110,9 @@ def get_structure_scene(
         for scene in site_scene.contents:
             primitives[scene.name] += scene.contents
 
-    primitives["unit_cell"].append(self.lattice.get_scene())
+    primitives["unit_cell"].append(structure.lattice.get_scene())
 
-    lattice_vectors = self.lattice.matrix.tolist()
+    lattice_vectors = structure.lattice.matrix.tolist()
 
     return Scene(
         name="Structure",

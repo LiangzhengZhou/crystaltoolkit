@@ -6,7 +6,7 @@ from base64 import b64encode
 from itertools import chain, combinations_with_replacement
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Literal
+from typing import Any, Literal, Sequence
 
 import numpy as np
 from dash import dash_table as dt
@@ -24,7 +24,9 @@ from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 
 from crystal_toolkit.core.legend import Legend
 from crystal_toolkit.core.mpcomponent import MPComponent
+from crystal_toolkit.core.orientation import direction_to_rotation, rotate_scene_json
 from crystal_toolkit.core.scene import Scene
+from crystal_toolkit.renderers.scene_renderer import render_scene_png
 from crystal_toolkit.helpers.layouts import H2, Field, dcc, html
 from crystal_toolkit.settings import SETTINGS
 
@@ -111,6 +113,8 @@ class StructureMoleculeComponent(MPComponent):
         show_image_button: bool = DEFAULTS["show_image_button"],
         show_export_button: bool = DEFAULTS["show_export_button"],
         show_position_button: bool = DEFAULTS["show_position_button"],
+        export_mode: Literal["browser", "server"] = "browser",
+        view_direction: Sequence[float] | None = None,
         scene_kwargs: dict | None = None,
         **kwargs,
     ) -> None:
@@ -145,6 +149,8 @@ class StructureMoleculeComponent(MPComponent):
             show_image_button (bool, optional): show or hide the image download as image button within the scene control bar.
             show_export_button (bool, optional): show or hide the file export button within the scene control bar.
             show_position_button (bool, optional): show or hide the revert position button within the scene control bar.
+            export_mode (Literal["browser", "server"], optional): choose image export mode.
+            view_direction (Sequence[float] | None, optional): direction to orient the structure before rendering.
             scene_kwargs (dict, optional): extra keyword arguments to pass to CrystalToolkitScene.
                 e.g. sceneSize, axisView, renderer, customCameraState, etc. See
                 https://github.com/materialsproject/dash-mp-components/blob/maindash_mp_components/CrystalToolkitScene.py
@@ -160,6 +166,8 @@ class StructureMoleculeComponent(MPComponent):
         self.show_image_button = show_image_button
         self.show_export_button = show_export_button
         self.show_position_button = show_position_button
+        self.export_mode = export_mode
+        self.view_direction = view_direction
 
         self.initial_scene_settings = {**self.default_scene_settings}
         if scene_settings:
@@ -191,6 +199,7 @@ class StructureMoleculeComponent(MPComponent):
                 "hide_incomplete_bonds": hide_incomplete_bonds,
                 "show_compass": show_compass,
                 "group_by_site_property": group_by_site_property,
+                "view_direction": view_direction,
             },
         )
 
@@ -451,7 +460,7 @@ class StructureMoleculeComponent(MPComponent):
             State(self.id(), "data"),
         )
         def download_image(image_data_timestamp, image_data, data):
-            if not image_data_timestamp:
+            if self.export_mode == "browser" and not image_data_timestamp:
                 raise PreventUpdate
 
             struct_or_mol = self.from_data(data)
@@ -472,8 +481,23 @@ class StructureMoleculeComponent(MPComponent):
             if material_id:
                 request_filename = f"{material_id}-{request_filename}"
 
+            if self.export_mode == "server":
+                graph = self._preprocess_input_to_graph(struct_or_mol)
+                scene, _ = self.get_scene_and_legend(
+                    graph,
+                    scene_additions=self.initial_data["scene_additions"],
+                    **self.initial_data["display_options"],
+                )
+                render_result = render_scene_png(
+                    scene,
+                    legend=self._legend,
+                )
+                content = b64encode(render_result.image_bytes).decode("ascii")
+            else:
+                content = image_data[len("data:image/png;base64,") :]
+
             return {
-                "content": image_data[len("data:image/png;base64,") :],
+                "content": content,
                 "filename": request_filename,
                 "base64": True,
                 "type": "image/png",
@@ -1032,6 +1056,7 @@ class StructureMoleculeComponent(MPComponent):
         scene_additions=None,
         show_compass=DEFAULTS["show_compass"],
         group_by_site_property=None,
+        view_direction: Sequence[float] | None = None,
     ) -> tuple[Scene, dict[str, str]]:
         """Get the scene and legend for a given graph.
 
@@ -1050,6 +1075,7 @@ class StructureMoleculeComponent(MPComponent):
             scene_additions (dict, optional): Additional contents to include in the scene. Defaults to None.
             show_compass (bool, optional): Whether to show a compass in the scene. Defaults to True.
             group_by_site_property (str, optional): Property by which to group sites. Defaults to None.
+            view_direction (Sequence[float] | None, optional): Direction to align with +Z axis.
 
         Returns:
             tuple[Scene, dict[str, str]]: A tuple containing the scene and legend for the given graph.
@@ -1094,6 +1120,13 @@ class StructureMoleculeComponent(MPComponent):
         if scene_additions:
             # TODO: this might be cleaner if we had a Scene.from_json() method
             scene_json["contents"].append(scene_additions)
+
+        if view_direction is not None and hasattr(struct_or_mol, "lattice"):
+            rotation = direction_to_rotation(
+                np.array(view_direction, dtype=float),
+                lattice=struct_or_mol.lattice.matrix,
+            )
+            scene_json = rotate_scene_json(scene_json, rotation)
 
         return scene_json, legend.get_legend()
 
