@@ -52,7 +52,10 @@ def bonds_cutoff(structure: Structure, cutoff: float) -> list[Bond]:
     bonds: list[Bond] = []
     for index, site in enumerate(structure):
         neighbors = structure.get_sites_in_sphere(site.coords, cutoff, include_index=True)
-        for neighbor, dist, neighbor_index in neighbors:
+        for entry in neighbors:
+            neighbor = entry[0]
+            dist = entry[1]
+            neighbor_index = entry[-1]
             if neighbor_index == index or neighbor_index < index:
                 continue
             bonds.append(
