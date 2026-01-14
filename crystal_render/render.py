@@ -175,6 +175,12 @@ def render_structure(
                 always_visible=True,
             )
 
-    plotter.show_axes(False)
+    if hasattr(plotter, "hide_axes"):
+        plotter.hide_axes()
+    else:
+        try:
+            plotter.show_axes(False)
+        except TypeError:
+            plotter.show_axes()
     plotter.camera_position = "xy"
     plotter.show(screenshot=output_path, auto_close=True)
