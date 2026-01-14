@@ -56,6 +56,8 @@ def bonds_cutoff(structure: Structure, cutoff: float) -> list[Bond]:
             neighbor = entry[0]
             dist = entry[1]
             neighbor_index = entry[-1]
+            if isinstance(neighbor_index, tuple):
+                neighbor_index = neighbor_index[0]
             if neighbor_index == index or neighbor_index < index:
                 continue
             bonds.append(
